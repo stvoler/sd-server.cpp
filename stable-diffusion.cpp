@@ -981,6 +981,8 @@ public:
                         SDCondition id_cond,
                         ggml_tensor* denoise_mask = NULL) {
         std::vector<int> skip_layers(guidance.slg.layers, guidance.slg.layers + guidance.slg.layer_count);
+        // TODO: arg or env
+        bool is_kontext = true;
 
         float cfg_scale     = guidance.txt_cfg;
         float img_cfg_scale = guidance.img_cfg;
@@ -1099,6 +1101,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
+                                         is_kontext,
                                          &out_cond);
             } else {
                 diffusion_model->compute(n_threads,
@@ -1111,6 +1114,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
+                                         is_kontext,
                                          &out_cond);
             }
             int step_count         = sigmas.size();
@@ -1135,6 +1139,7 @@ public:
                                              -1,
                                              controls,
                                              control_strength,
+                                             is_kontext,
                                              &out_uncond,
                                              NULL,
                                              skip_layers);
@@ -1149,6 +1154,7 @@ public:
                                              -1,
                                              controls,
                                              control_strength,
+                                             is_kontext,
                                              &out_uncond);
                 }
                 negative_data = (float*)out_uncond->data;
@@ -1166,6 +1172,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
+                                         is_kontext,
                                          &out_img_cond);
                 img_cond_data = (float*)out_img_cond->data;
             }
@@ -1184,6 +1191,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
+                                         is_kontext,
                                          &out_skip,
                                          NULL,
                                          skip_layers);
@@ -1244,7 +1252,7 @@ public:
                     }
                     deltas[i] = delta;
                 }
-                if(log_cfg_norm){
+                if (log_cfg_norm) {
                     LOG_INFO("CFG Delta norm: %.2f", sqrtf(diff_norm));
                 }
                 if (guidance.apg.norm_treshold > 0) {
@@ -1429,7 +1437,7 @@ public:
 
         // TODO: args instead of env for tile size / overlap?
 
-        float tile_overlap = 0.5f;
+        float tile_overlap          = 0.5f;
         const char* SD_TILE_OVERLAP = getenv("SD_TILE_OVERLAP");
         if (SD_TILE_OVERLAP != nullptr) {
             std::string sd_tile_overlap_str = SD_TILE_OVERLAP;
@@ -1438,8 +1446,7 @@ public:
                 if (tile_overlap < 0.0) {
                     LOG_WARN("SD_TILE_OVERLAP too low, setting it to 0.0");
                     tile_overlap = 0.0;
-                }
-                else if (tile_overlap > 0.5) {
+                } else if (tile_overlap > 0.5) {
                     LOG_WARN("SD_TILE_OVERLAP too high, setting it to 0.5");
                     tile_overlap = 0.5;
                 }
@@ -1450,8 +1457,8 @@ public:
             }
         }
 
-        int tile_size_x = 32;
-        int tile_size_y = 32;
+        int tile_size_x          = 32;
+        int tile_size_y          = 32;
         const char* SD_TILE_SIZE = getenv("SD_TILE_SIZE");
         if (SD_TILE_SIZE != nullptr) {
             // format is AxB, or just A (equivalent to AxA)
@@ -1465,11 +1472,11 @@ public:
                     factor = 1 / (factor - factor * tile_overlap + tile_overlap);
                 return factor;
             };
-            const int latent_x = W / (decode ? 1 : 8);
-            const int latent_y = H / (decode ? 1 : 8);
+            const int latent_x           = W / (decode ? 1 : 8);
+            const int latent_y           = H / (decode ? 1 : 8);
             const int min_tile_dimension = 4;
             std::string sd_tile_size_str = SD_TILE_SIZE;
-            size_t x_pos = sd_tile_size_str.find('x');
+            size_t x_pos                 = sd_tile_size_str.find('x');
             try {
                 int tmp_x = tile_size_x, tmp_y = tile_size_y;
                 if (x_pos != std::string::npos) {
@@ -1477,24 +1484,20 @@ public:
                     std::string tile_y_str = sd_tile_size_str.substr(x_pos + 1);
                     if (tile_x_str.find('.') != std::string::npos) {
                         tmp_x = std::round(latent_x * get_tile_factor(tile_x_str));
-                    }
-                    else {
+                    } else {
                         tmp_x = std::stoi(tile_x_str);
                     }
                     if (tile_y_str.find('.') != std::string::npos) {
                         tmp_y = std::round(latent_y * get_tile_factor(tile_y_str));
-                    }
-                    else {
+                    } else {
                         tmp_y = std::stoi(tile_y_str);
                     }
-                }
-                else {
+                } else {
                     if (sd_tile_size_str.find('.') != std::string::npos) {
                         float tile_factor = get_tile_factor(sd_tile_size_str);
-                        tmp_x = std::round(latent_x * tile_factor);
-                        tmp_y = std::round(latent_y * tile_factor);
-                    }
-                    else {
+                        tmp_x             = std::round(latent_x * tile_factor);
+                        tmp_y             = std::round(latent_y * tile_factor);
+                    } else {
                         tmp_x = tmp_y = std::stoi(sd_tile_size_str);
                     }
                 }
@@ -1507,11 +1510,11 @@ public:
             }
         }
 
-        if(!decode){
+        if (!decode) {
             // TODO: also use and arg for this one?
             // to keep the compute buffer size consistent
-            tile_size_x*=1.30539;
-            tile_size_y*=1.30539;
+            tile_size_x *= 1.30539;
+            tile_size_y *= 1.30539;
         }
         if (!use_tiny_autoencoder) {
             if (decode) {
@@ -1677,6 +1680,8 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                            std::string input_id_images_path,
                            ggml_tensor* concat_latent = NULL,
                            ggml_tensor* denoise_mask  = NULL) {
+    // TODO: arg or env
+    bool is_kontext = true;
     if (seed < 0) {
         // Generally, when using the provided command line, the seed is always >0.
         // However, to prevent potential issues if 'stable-diffusion.cpp' is invoked as a library
@@ -1949,6 +1954,8 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
         LOG_INFO("HERE");
 
         cond.c_concat = concat_latent;
+    } else if (is_kontext) {
+        cond.c_concat = concat_latent;
     }
 
     for (int b = 0; b < batch_count; b++) {
@@ -2157,6 +2164,8 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                     float style_ratio,
                     bool normalize_input,
                     const char* input_id_images_path_c_str) {
+    // TODO: arg or env
+    bool is_kontext = true;
     LOG_DEBUG("img2img %dx%d", width, height);
     if (sd_ctx == NULL) {
         return NULL;
@@ -2280,10 +2289,10 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
             }
         }
     } else {
-        if (sd_version_is_edit(sd_ctx->sd->version)) {
+        if (sd_version_is_edit(sd_ctx->sd->version) || is_kontext) {
             // Not actually masked, we're just highjacking the masked_latent variable since it will be used the same way
             if (!sd_ctx->sd->use_tiny_autoencoder) {
-                if (sd_ctx->sd->is_using_edm_v_parameterization) {
+                if (sd_ctx->sd->is_using_edm_v_parameterization || is_kontext) {
                     // for CosXL edit
                     concat_latent = sd_ctx->sd->get_first_stage_encoding(work_ctx, init_moments);
                 } else {
