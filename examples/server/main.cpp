@@ -1516,7 +1516,8 @@ void start_server(SDParams params) {
                                   1,
                                   params.lastRequest.style_ratio,
                                   params.lastRequest.normalize_input,
-                                  params.input_id_images_path.c_str());
+                                  params.input_id_images_path.c_str(),
+                                  NULL, 0);
 
                 if (results == NULL) {
                     printf("generate failed\n");
