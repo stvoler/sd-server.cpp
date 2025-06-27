@@ -930,14 +930,13 @@ namespace Flux {
         }
 
         struct ggml_tensor* forward(struct ggml_context* ctx,
-                                    struct ggml_tensor* x,
+                                    std::vector<struct ggml_tensor*> imgs,
                                     struct ggml_tensor* timestep,
                                     struct ggml_tensor* context,
                                     struct ggml_tensor* c_concat,
                                     struct ggml_tensor* y,
                                     struct ggml_tensor* guidance,
                                     struct ggml_tensor* pe,
-                                    bool kontext_concat          = false,
                                     struct ggml_tensor* arange   = NULL,
                                     std::vector<int> skip_layers = std::vector<int>(),
                                     SDVersion version            = VERSION_FLUX) {
@@ -951,19 +950,31 @@ namespace Flux {
             // pe: (L, d_head/2, 2, 2)
             // return: (N, C, H, W)
 
+            auto x = imgs[0];
             GGML_ASSERT(x->ne[3] == 1);
 
             int64_t W          = x->ne[0];
             int64_t H          = x->ne[1];
             int64_t C          = x->ne[2];
             int64_t patch_size = 2;
-            int pad_h          = (patch_size - H % patch_size) % patch_size;
-            int pad_w          = (patch_size - W % patch_size) % patch_size;
-            x                  = ggml_pad(ctx, x, pad_w, pad_h, 0, 0);  // [N, C, H + pad_h, W + pad_w]
+            int pad_h          = (patch_size - x->ne[0] % patch_size) % patch_size;
+            int pad_w          = (patch_size - x->ne[1] % patch_size) % patch_size;
 
             // img = rearrange(x, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=patch_size, pw=patch_size)
-            auto img                    = patchify(ctx, x, patch_size);  // [N, h*w, C * patch_size * patch_size]
-            int64_t patchified_img_size = img->ne[1];
+            ggml_tensor* img = NULL;  // [N, h*w, C * patch_size * patch_size]
+            int64_t patchified_img_size;
+            for (auto& x : imgs) {
+                int pad_h          = (patch_size - x->ne[0] % patch_size) % patch_size;
+                int pad_w          = (patch_size - x->ne[1] % patch_size) % patch_size;
+                ggml_tensor* pad_x = ggml_pad(ctx, x, pad_w, pad_h, 0, 0);
+                pad_x              = patchify(ctx, pad_x, patch_size);
+                if (img) {
+                    img = ggml_concat(ctx, img, pad_x, 1);
+                } else {
+                    img                 = pad_x;
+                    patchified_img_size = img->ne[1];
+                }
+            }
             if (version == VERSION_FLUX_FILL) {
                 GGML_ASSERT(c_concat != NULL);
                 ggml_tensor* masked = ggml_view_4d(ctx, c_concat, c_concat->ne[0], c_concat->ne[1], C, 1, c_concat->nb[1], c_concat->nb[2], c_concat->nb[3], 0);
@@ -999,10 +1010,6 @@ namespace Flux {
                 control = patchify(ctx, control, patch_size);
 
                 img = ggml_concat(ctx, img, control, 0);
-            } else if (kontext_concat && c_concat != NULL) {
-                ggml_tensor* kontext = ggml_pad(ctx, c_concat, pad_w, pad_h, 0, 0);
-                kontext = patchify(ctx, kontext, patch_size);
-                img = ggml_concat(ctx, img, kontext, 1);
             }
 
             auto out = forward_orig(ctx, img, context, timestep, y, guidance, pe, arange, skip_layers);  // [N, h*w, C * patch_size * patch_size]
@@ -1097,8 +1104,8 @@ namespace Flux {
                                         struct ggml_tensor* c_concat,
                                         struct ggml_tensor* y,
                                         struct ggml_tensor* guidance,
-                                        bool kontext_concat          = false,
-                                        std::vector<int> skip_layers = std::vector<int>()) {
+                                        std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                                        std::vector<int> skip_layers                  = std::vector<int>()) {
             GGML_ASSERT(x->ne[3] == 1);
             struct ggml_cgraph* gf = ggml_new_graph_custom(compute_ctx, FLUX_GRAPH_SIZE, false);
 
@@ -1108,6 +1115,9 @@ namespace Flux {
             context = to_backend(context);
             if (c_concat != NULL) {
                 c_concat = to_backend(c_concat);
+            }
+            for (auto &img : kontext_imgs){
+                img = to_backend(img);
             }
             if (flux_params.is_chroma) {
                 const char* SD_CHROMA_ENABLE_GUIDANCE = getenv("SD_CHROMA_ENABLE_GUIDANCE");
@@ -1148,11 +1158,8 @@ namespace Flux {
             if (flux_params.guidance_embed || flux_params.is_chroma) {
                 guidance = to_backend(guidance);
             }
-
-            std::vector<struct ggml_tensor*> imgs{x};
-            if (kontext_concat && c_concat != NULL) {
-                imgs.push_back(c_concat);
-            }
+            auto imgs = kontext_imgs;
+            imgs.insert(imgs.begin(), x);
 
             pe_vec      = flux.gen_pe(imgs, context, 2, flux_params.theta, flux_params.axes_dim);
             int pos_len = pe_vec.size() / flux_params.axes_dim_sum / 2;
@@ -1175,14 +1182,13 @@ namespace Flux {
             // }
 
             struct ggml_tensor* out = flux.forward(compute_ctx,
-                                                   x,
+                                                   imgs,
                                                    timesteps,
                                                    context,
                                                    c_concat,
                                                    y,
                                                    guidance,
                                                    pe,
-                                                   kontext_concat,
                                                    precompute_arange,
                                                    skip_layers,
                                                    version);
@@ -1199,17 +1205,17 @@ namespace Flux {
                      struct ggml_tensor* c_concat,
                      struct ggml_tensor* y,
                      struct ggml_tensor* guidance,
-                     bool kontext_concat             = false,
-                     struct ggml_tensor** output     = NULL,
-                     struct ggml_context* output_ctx = NULL,
-                     std::vector<int> skip_layers    = std::vector<int>()) {
+                     std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                     struct ggml_tensor** output                   = NULL,
+                     struct ggml_context* output_ctx               = NULL,
+                     std::vector<int> skip_layers                  = std::vector<int>()) {
             // x: [N, in_channels, h, w]
             // timesteps: [N, ]
             // context: [N, max_position, hidden_size]
             // y: [N, adm_in_channels] or [1, adm_in_channels]
             // guidance: [N, ]
             auto get_graph = [&]() -> struct ggml_cgraph* {
-                return build_graph(x, timesteps, context, c_concat, y, guidance, kontext_concat, skip_layers);
+                return build_graph(x, timesteps, context, c_concat, y, guidance, kontext_imgs, skip_layers);
             };
 
             return GGMLRunner::compute(get_graph, n_threads, false, output, output_ctx);
@@ -1249,7 +1255,7 @@ namespace Flux {
                 struct ggml_tensor* out = NULL;
 
                 int t0 = ggml_time_ms();
-                compute(8, x, timesteps, context, NULL, y, guidance, false, &out, work_ctx);
+                compute(8, x, timesteps, context, NULL, y, guidance, std::vector<struct ggml_tensor*>(), &out, work_ctx);
                 int t1 = ggml_time_ms();
 
                 LOG_DEBUG("flux test done in %dms", t1 - t0);

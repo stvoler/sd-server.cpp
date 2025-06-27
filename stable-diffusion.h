@@ -127,17 +127,15 @@ typedef struct {
     uint8_t* data;
 } sd_image_t;
 
-
 typedef void (*sd_log_cb_t)(enum sd_log_level_t level, const char* text, void* data);
 typedef void (*sd_progress_cb_t)(int step, int steps, float time, void* data);
 typedef void (*sd_preview_cb_t)(int, sd_image_t);
-typedef bool (*sd_graph_eval_callback_t)(struct ggml_tensor * t, bool ask, void * user_data);
-
+typedef bool (*sd_graph_eval_callback_t)(struct ggml_tensor* t, bool ask, void* user_data);
 
 SD_API void sd_set_log_callback(sd_log_cb_t sd_log_cb, void* data);
 SD_API void sd_set_progress_callback(sd_progress_cb_t cb, void* data);
 SD_API void sd_set_preview_callback(sd_preview_cb_t cb, sd_preview_t mode, int interval);
-SD_API void sd_set_backend_eval_callback(sd_graph_eval_callback_t cb, void * data);
+SD_API void sd_set_backend_eval_callback(sd_graph_eval_callback_t cb, void* data);
 SD_API int32_t get_num_physical_cores();
 SD_API const char* sd_get_system_info();
 
@@ -210,7 +208,9 @@ SD_API sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                            float control_strength,
                            float style_strength,
                            bool normalize_input,
-                           const char* input_id_images_path);
+                           const char* input_id_images_path,
+                           sd_image_t* kontext_imgs,
+                           int kontext_img_count);
 
 SD_API sd_image_t* img2img(sd_ctx_t* sd_ctx,
                            sd_image_t init_image,
@@ -231,7 +231,9 @@ SD_API sd_image_t* img2img(sd_ctx_t* sd_ctx,
                            float control_strength,
                            float style_strength,
                            bool normalize_input,
-                           const char* input_id_images_path);
+                           const char* input_id_images_path,
+                           sd_image_t* kontext_imgs,
+                           int kontext_img_count);
 
 SD_API sd_image_t* img2vid(sd_ctx_t* sd_ctx,
                            sd_image_t init_image,
@@ -266,8 +268,8 @@ SD_API uint8_t* preprocess_canny(uint8_t* img,
                                  float strong,
                                  bool inverse);
 
-SD_API bool loadImatrix(const char * imatrix_path);
-SD_API void saveImatrix(const char * imatrix_path);
+SD_API bool loadImatrix(const char* imatrix_path);
+SD_API void saveImatrix(const char* imatrix_path);
 SD_API void enableImatrixCollection();
 SD_API void disableImatrixCollection();
 

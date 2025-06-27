@@ -13,13 +13,13 @@ struct DiffusionModel {
                          struct ggml_tensor* c_concat,
                          struct ggml_tensor* y,
                          struct ggml_tensor* guidance,
-                         int num_video_frames                      = -1,
-                         std::vector<struct ggml_tensor*> controls = {},
-                         float control_strength                    = 0.f,
-                         bool kontext_concat                       = false,
-                         struct ggml_tensor** output               = NULL,
-                         struct ggml_context* output_ctx           = NULL,
-                         std::vector<int> skip_layers              = std::vector<int>())             = 0;
+                         int num_video_frames                          = -1,
+                         std::vector<struct ggml_tensor*> controls     = {},
+                         float control_strength                        = 0.f,
+                         std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                         struct ggml_tensor** output                   = NULL,
+                         struct ggml_context* output_ctx               = NULL,
+                         std::vector<int> skip_layers                  = std::vector<int>())             = 0;
     virtual void alloc_params_buffer()                                                  = 0;
     virtual void free_params_buffer()                                                   = 0;
     virtual void free_compute_buffer()                                                  = 0;
@@ -69,13 +69,13 @@ struct UNetModel : public DiffusionModel {
                  struct ggml_tensor* c_concat,
                  struct ggml_tensor* y,
                  struct ggml_tensor* guidance,
-                 int num_video_frames                      = -1,
-                 std::vector<struct ggml_tensor*> controls = {},
-                 float control_strength                    = 0.f,
-                 bool kontext_concat                       = false,
-                 struct ggml_tensor** output               = NULL,
-                 struct ggml_context* output_ctx           = NULL,
-                 std::vector<int> skip_layers              = std::vector<int>()) {
+                 int num_video_frames                          = -1,
+                 std::vector<struct ggml_tensor*> controls     = {},
+                 float control_strength                        = 0.f,
+                 std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                 struct ggml_tensor** output                   = NULL,
+                 struct ggml_context* output_ctx               = NULL,
+                 std::vector<int> skip_layers                  = std::vector<int>()) {
         (void)skip_layers;  // SLG doesn't work with UNet models
         return unet.compute(n_threads, x, timesteps, context, c_concat, y, num_video_frames, controls, control_strength, output, output_ctx);
     }
@@ -123,7 +123,7 @@ struct MMDiTModel : public DiffusionModel {
                  int num_video_frames                      = -1,
                  std::vector<struct ggml_tensor*> controls = {},
                  float control_strength                    = 0.f,
-                 bool kontext_concat                       = false,
+                 std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
                  struct ggml_tensor** output               = NULL,
                  struct ggml_context* output_ctx           = NULL,
                  std::vector<int> skip_layers              = std::vector<int>()) {
@@ -172,14 +172,14 @@ struct FluxModel : public DiffusionModel {
                  struct ggml_tensor* c_concat,
                  struct ggml_tensor* y,
                  struct ggml_tensor* guidance,
-                 int num_video_frames                      = -1,
-                 std::vector<struct ggml_tensor*> controls = {},
-                 float control_strength                    = 0.f,
-                 bool kontext_concat                       = false,
-                 struct ggml_tensor** output               = NULL,
-                 struct ggml_context* output_ctx           = NULL,
-                 std::vector<int> skip_layers              = std::vector<int>()) {
-        return flux.compute(n_threads, x, timesteps, context, c_concat, y, guidance, kontext_concat, output, output_ctx, skip_layers);
+                 int num_video_frames                          = -1,
+                 std::vector<struct ggml_tensor*> controls     = {},
+                 float control_strength                        = 0.f,
+                 std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                 struct ggml_tensor** output                   = NULL,
+                 struct ggml_context* output_ctx               = NULL,
+                 std::vector<int> skip_layers                  = std::vector<int>()) {
+        return flux.compute(n_threads, x, timesteps, context, c_concat, y, guidance, kontext_imgs, output, output_ctx, skip_layers);
     }
 };
 

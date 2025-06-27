@@ -691,7 +691,7 @@ public:
 
         int64_t t0              = ggml_time_ms();
         struct ggml_tensor* out = ggml_dup_tensor(work_ctx, x_t);
-        diffusion_model->compute(n_threads, x_t, timesteps, c, concat, NULL, NULL, -1, {}, 0.f, &out);
+        diffusion_model->compute(n_threads, x_t, timesteps, c, concat, NULL, NULL, -1, {}, 0.f, std::vector<struct ggml_tensor*>(), &out);
         diffusion_model->free_compute_buffer();
 
         double result = 0.f;
@@ -979,10 +979,9 @@ public:
                         const std::vector<float>& sigmas,
                         int start_merge_step,
                         SDCondition id_cond,
-                        ggml_tensor* denoise_mask = NULL) {
+                        std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                        ggml_tensor* denoise_mask                     = NULL) {
         std::vector<int> skip_layers(guidance.slg.layers, guidance.slg.layers + guidance.slg.layer_count);
-        // TODO: arg or env
-        bool is_kontext = true;
 
         float cfg_scale     = guidance.txt_cfg;
         float img_cfg_scale = guidance.img_cfg;
@@ -1101,7 +1100,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
-                                         is_kontext,
+                                         kontext_imgs,
                                          &out_cond);
             } else {
                 diffusion_model->compute(n_threads,
@@ -1114,7 +1113,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
-                                         is_kontext,
+                                         kontext_imgs,
                                          &out_cond);
             }
             int step_count         = sigmas.size();
@@ -1139,7 +1138,7 @@ public:
                                              -1,
                                              controls,
                                              control_strength,
-                                             is_kontext,
+                                             kontext_imgs,
                                              &out_uncond,
                                              NULL,
                                              skip_layers);
@@ -1154,7 +1153,7 @@ public:
                                              -1,
                                              controls,
                                              control_strength,
-                                             is_kontext,
+                                             kontext_imgs,
                                              &out_uncond);
                 }
                 negative_data = (float*)out_uncond->data;
@@ -1172,7 +1171,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
-                                         is_kontext,
+                                         kontext_imgs,
                                          &out_img_cond);
                 img_cond_data = (float*)out_img_cond->data;
             }
@@ -1191,7 +1190,7 @@ public:
                                          -1,
                                          controls,
                                          control_strength,
-                                         is_kontext,
+                                         kontext_imgs,
                                          &out_skip,
                                          NULL,
                                          skip_layers);
@@ -1678,8 +1677,9 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                            float style_ratio,
                            bool normalize_input,
                            std::string input_id_images_path,
-                           ggml_tensor* concat_latent = NULL,
-                           ggml_tensor* denoise_mask  = NULL) {
+                           std::vector<struct ggml_tensor*> kontext_imgs = std::vector<struct ggml_tensor*>(),
+                           ggml_tensor* concat_latent                    = NULL,
+                           ggml_tensor* denoise_mask                     = NULL) {
     // TODO: arg or env
     bool is_kontext = true;
     if (seed < 0) {
@@ -1992,6 +1992,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                                                      sigmas,
                                                      start_merge_step,
                                                      id_cond,
+                                                     kontext_imgs,
                                                      denoise_mask);
 
         // struct ggml_tensor* x_0 = load_tensor_from_file(ctx, "samples_ddim.bin");
@@ -2059,7 +2060,9 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                     float control_strength,
                     float style_ratio,
                     bool normalize_input,
-                    const char* input_id_images_path_c_str) {
+                    const char* input_id_images_path_c_str,
+                    sd_image_t* kontext_imgs,
+                    int kontext_img_count) {
     LOG_DEBUG("txt2img %dx%d", width, height);
     if (sd_ctx == NULL) {
         return NULL;
@@ -2116,6 +2119,22 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
     if (sd_version_is_inpaint(sd_ctx->sd->version)) {
         LOG_WARN("This is an inpainting model, this should only be used in img2img mode with a mask");
     }
+    std::vector<struct ggml_tensor*> kontext_latents = std::vector<struct ggml_tensor*>();
+    if (kontext_imgs) {
+        for (int i = 0; i < kontext_img_count; i++) {
+            ggml_tensor* img = ggml_new_tensor_4d(work_ctx, GGML_TYPE_F32, kontext_imgs[i].width, kontext_imgs[i].height, 3, 1);
+            sd_image_to_tensor(kontext_imgs[i].data, img);
+
+            ggml_tensor* latent = NULL;
+            if (!sd_ctx->sd->use_tiny_autoencoder) {
+                ggml_tensor* moments = sd_ctx->sd->encode_first_stage(work_ctx, img);
+                latent               = sd_ctx->sd->get_first_stage_encoding(work_ctx, moments);
+            } else {
+                latent = sd_ctx->sd->encode_first_stage(work_ctx, img);
+            }
+            kontext_latents.push_back(latent);
+        }
+    }
 
     sd_image_t* result_images = generate_image(sd_ctx,
                                                work_ctx,
@@ -2135,7 +2154,7 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                                                control_strength,
                                                style_ratio,
                                                normalize_input,
-                                               input_id_images_path_c_str, NULL, NULL);
+                                               input_id_images_path_c_str, kontext_latents, NULL, NULL);
 
     size_t t1 = ggml_time_ms();
 
@@ -2163,9 +2182,9 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                     float control_strength,
                     float style_ratio,
                     bool normalize_input,
-                    const char* input_id_images_path_c_str) {
-    // TODO: arg or env
-    bool is_kontext = true;
+                    const char* input_id_images_path_c_str,
+                    sd_image_t* kontext_imgs,
+                    int kontext_img_count) {
     LOG_DEBUG("img2img %dx%d", width, height);
     if (sd_ctx == NULL) {
         return NULL;
@@ -2289,10 +2308,10 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
             }
         }
     } else {
-        if (sd_version_is_edit(sd_ctx->sd->version) || is_kontext) {
+        if (sd_version_is_edit(sd_ctx->sd->version)) {
             // Not actually masked, we're just highjacking the masked_latent variable since it will be used the same way
             if (!sd_ctx->sd->use_tiny_autoencoder) {
-                if (sd_ctx->sd->is_using_edm_v_parameterization || is_kontext) {
+                if (sd_ctx->sd->is_using_edm_v_parameterization) {
                     // for CosXL edit
                     concat_latent = sd_ctx->sd->get_first_stage_encoding(work_ctx, init_moments);
                 } else {
@@ -2311,6 +2330,23 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                 float m = ggml_tensor_get_f32(mask_img, mx, my);
                 ggml_tensor_set_f32(denoise_mask, m, ix, iy);
             }
+        }
+    }
+
+    std::vector<struct ggml_tensor*> kontext_latents = std::vector<struct ggml_tensor*>();
+    if (kontext_imgs) {
+        for (int i = 0; i < kontext_img_count; i++) {
+            ggml_tensor* img = ggml_new_tensor_4d(work_ctx, GGML_TYPE_F32, width, height, 3, 1);
+            sd_image_to_tensor(kontext_imgs[i].data, img);
+
+            ggml_tensor* latent = NULL;
+            if (!sd_ctx->sd->use_tiny_autoencoder) {
+                ggml_tensor* moments = sd_ctx->sd->encode_first_stage(work_ctx, img);
+                latent               = sd_ctx->sd->get_first_stage_encoding(work_ctx, moments);
+            } else {
+                latent = sd_ctx->sd->encode_first_stage(work_ctx, img);
+            }
+            kontext_latents.push_back(latent);
         }
     }
 
@@ -2345,6 +2381,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                                                style_ratio,
                                                normalize_input,
                                                input_id_images_path_c_str,
+                                               kontext_latents,
                                                concat_latent,
                                                denoise_mask);
 
@@ -2446,6 +2483,7 @@ SD_API sd_image_t* img2vid(sd_ctx_t* sd_ctx,
                                                  sigmas,
                                                  -1,
                                                  SDCondition(NULL, NULL, NULL),
+                                                 std::vector<struct ggml_tensor*>(),
                                                  NULL);
 
     int64_t t2 = ggml_time_ms();

@@ -97,6 +97,8 @@ struct SDParams {
     std::string mask_path;
     std::string control_image_path;
 
+    std::vector<std::string> kontext_image_paths;
+
     std::string prompt;
     std::string negative_prompt;
     float min_cfg       = 1.0f;
@@ -289,6 +291,7 @@ void print_usage(int argc, const char* argv[]) {
     printf("  --preview-path [PATH}              path to write preview image to (default: ./preview.png)\n");
     printf("  --color                            Colors the logging tags according to level\n");
     printf("  -v, --verbose                      print extra info\n");
+    printf("  -ki, --kontext_img [PATH]        Reference image for Flux Kontext models (can be used multiple times) \n");
 }
 
 void parse_args(int argc, const char** argv, SDParams& params) {
@@ -724,6 +727,12 @@ void parse_args(int argc, const char** argv, SDParams& params) {
                 break;
             }
             params.imatrix_in.push_back(std::string(argv[i]));
+        } else if (arg == "-ki" || arg == "--kontext-img") {
+            if (++i >= argc) {
+                invalid_arg = true;
+                break;
+            }
+            params.kontext_image_paths.push_back(argv[i]);
         } else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             print_usage(argc, argv);
@@ -958,12 +967,10 @@ int main(int argc, const char* argv[]) {
                                                 params.skip_layer_end,
                                                 params.slg_scale,
                                             },
-                                            {
-                                                params.apg_eta,
-                                                params.apg_momentum,
-                                                params.apg_norm_threshold,
-                                                params.apg_norm_smoothing
-                                            }};
+                                            {params.apg_eta,
+                                             params.apg_momentum,
+                                             params.apg_norm_threshold,
+                                             params.apg_norm_smoothing}};
 
     sd_set_log_callback(sd_log_cb, (void*)&params);
     sd_set_preview_callback((sd_preview_cb_t)step_callback, params.preview_method, params.preview_interval);
@@ -1007,8 +1014,40 @@ int main(int argc, const char* argv[]) {
         fprintf(stderr, "SVD support is broken, do not use it!!!\n");
         return 1;
     }
-
     bool vae_decode_only          = true;
+
+    std::vector<sd_image_t> kontext_imgs;
+    for (auto& path : params.kontext_image_paths) {
+        vae_decode_only = false;
+        int c                 = 0;
+        int width             = 0;
+        int height            = 0;
+        uint8_t* image_buffer = stbi_load(path.c_str(), &width, &height, &c, 3);
+        if (image_buffer == NULL) {
+            fprintf(stderr, "load image from '%s' failed\n", path.c_str());
+            return 1;
+        }
+        if (c < 3) {
+            fprintf(stderr, "the number of channels for the input image must be >= 3, but got %d channels\n", c);
+            free(image_buffer);
+            return 1;
+        }
+        if (width <= 0) {
+            fprintf(stderr, "error: the width of image must be greater than 0\n");
+            free(image_buffer);
+            return 1;
+        }
+        if (height <= 0) {
+            fprintf(stderr, "error: the height of image must be greater than 0\n");
+            free(image_buffer);
+            return 1;
+        }
+        kontext_imgs.push_back({(uint32_t)width,
+                                (uint32_t)height,
+                                3,
+                                image_buffer});
+    }
+
     uint8_t* input_image_buffer   = NULL;
     uint8_t* control_image_buffer = NULL;
     uint8_t* mask_image_buffer    = NULL;
@@ -1148,7 +1187,8 @@ int main(int argc, const char* argv[]) {
                           params.control_strength,
                           params.style_ratio,
                           params.normalize_input,
-                          params.input_id_images_path.c_str());
+                          params.input_id_images_path.c_str(),
+                          kontext_imgs.data(), kontext_imgs.size());
     } else {
         sd_image_t input_image = {(uint32_t)params.width,
                                   (uint32_t)params.height,
@@ -1210,7 +1250,8 @@ int main(int argc, const char* argv[]) {
                               params.control_strength,
                               params.style_ratio,
                               params.normalize_input,
-                              params.input_id_images_path.c_str());
+                              params.input_id_images_path.c_str(),
+                              kontext_imgs.data(), kontext_imgs.size());
         }
     }
 
