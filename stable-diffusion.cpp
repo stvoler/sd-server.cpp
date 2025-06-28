@@ -2228,7 +2228,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
 
     sd_image_to_tensor(init_image.data, init_img);
 
-    ggml_tensor* concat_latent;
+    ggml_tensor* concat_latent = NULL;
     ggml_tensor* denoise_mask = NULL;
 
     ggml_tensor* init_latent  = NULL;
