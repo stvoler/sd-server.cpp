@@ -35,3 +35,6 @@ jobs:
           path: |
             build/bin/sd
             build/bin/sd-server
+            build/bin/libstable-diffusion*.dylib
+            build/bin/*.metal
+            build/bin/ggml-*.h
