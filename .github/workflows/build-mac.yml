@@ -1,0 +1,69 @@
+name: sd server (macOS)
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - '.github/workflows/build-macos.yml'
+      - 'CMakeLists.txt'
+      - '**/*.cpp'
+      - '**/*.cu'
+  workflow_dispatch:
+
+jobs:
+  mac-metal-universal:
+    runs-on: macos-latest
+
+    steps:
+    # 1 ─ репозиторий
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    # 2 ─ зависимости (CMake, Ninja, zip)
+    - name: Install deps
+      run: |
+        brew update
+        brew install cmake ninja zip
+
+    # 3 ─ конфигурация + сборка (универсальная arm64+x86_64, Metal)
+    - name: Configure & Build
+      shell: bash
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+          -DGGML_METAL=ON -DSD_METAL=ON
+        cmake --build . --parallel
+        cmake --build . --parallel --target sd-server
+
+    # 4 ─ проверить что собралось
+    - name: List build outputs
+      run: |
+        echo "Executables found:"
+        find build -type f -perm +111 | grep -E '(/sd$|/sd-server$)'
+
+    # 5 ─ собрать пакет
+    - name: Collect runtime
+      run: |
+        pkg=package
+        mkdir -p "$pkg"
+        # основные бинари
+        cp build/sd "$pkg/"
+        cp build/sd-server "$pkg/"
+        # лицензии
+        cp ggml/LICENSE "$pkg/ggml.txt"
+        cp LICENSE "$pkg/stable-diffusion.cpp.txt"
+
+    # 6 ─ zip + artifact
+    - name: Create zip
+      run: zip -r sd-mac-universal.zip package
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sd-mac-universal
+        path: sd-mac-universal.zip
