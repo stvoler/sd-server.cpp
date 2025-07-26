@@ -21,7 +21,7 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    # 2 ─ зависимости (CMake, Ninja, zip)
+    # 2 ─ зависимости
     - name: Install deps
       run: |
         brew update
