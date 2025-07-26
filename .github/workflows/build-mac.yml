@@ -1,69 +1,58 @@
-name: sd server (macOS)
+name: sd-mac-build
 
+# запускаем вручную или по пушу в master
 on:
   push:
     branches: [ master ]
     paths:
-      - '.github/workflows/build-macos.yml'
+      - '.github/workflows/sd-mac-build.yml'
       - 'CMakeLists.txt'
       - '**/*.cpp'
       - '**/*.cu'
   workflow_dispatch:
 
 jobs:
-  mac-metal-universal:
-    runs-on: macos-latest
+  build:
+    runs-on: macos-14    # Apple Silicon runner
 
     steps:
-    # 1 ─ репозиторий
+    # ① репозиторий + подмодули
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-        fetch-depth: 0
+        fetch-depth: 1
 
-    # 2 ─ зависимости
-    - name: Install deps
+    # ② инструменты (Ninja ускоряет сборку, zip нужен для упаковки)
+    - name: Deps
+      run: brew install ninja zip || true   # brew already has cmake
+
+    # ③ CMake: универсальный статический билд с Metal
+    - name: Configure
       run: |
-        brew update
-        brew install cmake ninja zip
+        cmake -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSD_METAL=ON \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
 
-    # 3 ─ конфигурация + сборка (универсальная arm64+x86_64, Metal)
-    - name: Configure & Build
-      shell: bash
+    # ④ Сборка основного бинаря и sd-server
+    - name: Build
       run: |
-        mkdir -p build
-        cd build
-        cmake .. -G Ninja \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-          -DGGML_METAL=ON -DSD_METAL=ON
-        cmake --build . --parallel
-        cmake --build . --parallel --target sd-server
+        cmake --build build --config Release -j$(sysctl -n hw.logicalcpu)
+        cmake --build build --config Release --target sd-server -j$(sysctl -n hw.logicalcpu)
 
-    # 4 ─ проверить что собралось
-    - name: List build outputs
+    # ⑤ Упаковка в zip
+    - name: Zip artifacts
       run: |
-        echo "Executables found:"
-        find build -type f -perm +111 | grep -E '(/sd$|/sd-server$)'
+        mkdir -p dist
+        cp build/bin/sd         dist/
+        cp build/bin/sd-server  dist/
+        cp ggml/LICENSE         dist/ggml.txt
+        cp LICENSE              dist/stable-diffusion.cpp.txt
+        zip -j sd-mac-universal.zip dist/*
 
-    # 5 ─ собрать пакет
-    - name: Collect runtime
-      run: |
-        pkg=package
-        mkdir -p "$pkg"
-        # основные бинари
-        cp build/sd "$pkg/"
-        cp build/sd-server "$pkg/"
-        # лицензии
-        cp ggml/LICENSE "$pkg/ggml.txt"
-        cp LICENSE "$pkg/stable-diffusion.cpp.txt"
-
-    # 6 ─ zip + artifact
-    - name: Create zip
-      run: zip -r sd-mac-universal.zip package
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    # ⑥ Артефакт
+    - uses: actions/upload-artifact@v4
       with:
         name: sd-mac-universal
         path: sd-mac-universal.zip
