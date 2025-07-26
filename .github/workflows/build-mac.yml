@@ -1,58 +1,37 @@
 name: sd-mac-build
 
-# запускаем вручную или по пушу в master
-on:
-  push:
-    branches: [ master ]
-    paths:
-      - '.github/workflows/sd-mac-build.yml'
-      - 'CMakeLists.txt'
-      - '**/*.cpp'
-      - '**/*.cu'
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
-    runs-on: macos-14    # Apple Silicon runner
+    runs-on: macos-14
 
     steps:
-    # ① репозиторий + подмодули
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 1
+      # ① Клонируем репозиторий вместе с подмодулями
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
-    # ② инструменты (Ninja ускоряет сборку, zip нужен для упаковки)
-    - name: Deps
-      run: brew install ninja zip || true   # brew already has cmake
+      # ② Конфигурация CMake (универсальный статический билд с Metal)
+      - name: Configure
+        run: |
+          cmake -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DSD_METAL=ON \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
 
-    # ③ CMake: универсальный статический билд с Metal
-    - name: Configure
-      run: |
-        cmake -B build -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DSD_METAL=ON \
-              -DBUILD_SHARED_LIBS=OFF \
-              -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+      # ③ Сборка sd и sd-server
+      - name: Build
+        run: |
+          cmake --build build --config Release -j$(sysctl -n hw.logicalcpu)
+          cmake --build build --config Release --target sd-server -j$(sysctl -n hw.logicalcpu)
 
-    # ④ Сборка основного бинаря и sd-server
-    - name: Build
-      run: |
-        cmake --build build --config Release -j$(sysctl -n hw.logicalcpu)
-        cmake --build build --config Release --target sd-server -j$(sysctl -n hw.logicalcpu)
-
-    # ⑤ Упаковка в zip
-    - name: Zip artifacts
-      run: |
-        mkdir -p dist
-        cp build/bin/sd         dist/
-        cp build/bin/sd-server  dist/
-        cp ggml/LICENSE         dist/ggml.txt
-        cp LICENSE              dist/stable-diffusion.cpp.txt
-        zip -j sd-mac-universal.zip dist/*
-
-    # ⑥ Артефакт
-    - uses: actions/upload-artifact@v4
-      with:
-        name: sd-mac-universal
-        path: sd-mac-universal.zip
+      # ④ Артефакты (оба бинаря)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sd-mac-universal
+          path: |
+            build/bin/sd
+            build/bin/sd-server
