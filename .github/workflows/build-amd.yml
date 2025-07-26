@@ -1,0 +1,69 @@
+# .github/workflows/build-amd.yml
+name: Build AMD GPU binary (Vulkan + DirectML)
+
+on:
+  push:
+    paths:
+      - '.github/workflows/build-amd.yml'
+      - 'CMakeLists.txt'
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/*.cu'
+  workflow_dispatch:
+
+jobs:
+  build-amd:
+    name: Windows AMD (Vulkan + DirectML)
+    runs-on: windows-2025
+
+    env:
+      VULKAN_VERSION: '1.3.261.1'
+
+    steps:
+      # 1) Репозиторий
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # 2) Vulkan SDK
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          curl.exe -o $Env:RUNNER_TEMP\VulkanSDK-Installer.exe `
+            -L "https://sdk.lunarg.com/sdk/download/$Env:VULKAN_VERSION/windows/VulkanSDK-$Env:VULKAN_VERSION-Installer.exe"
+          & "$Env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $Env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$Env:VULKAN_VERSION"
+          Add-Content $Env:GITHUB_ENV "PATH=C:\VulkanSDK\$Env:VULKAN_VERSION\Bin;$Env:PATH"
+
+      # 3) CMake (DirectML+Vulkan)
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build
+          Set-Location build
+          cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DSD_VULKAN=ON `
+            -DSD_DIRECTML=ON `
+            -DBUILD_SHARED_LIBS=OFF
+
+      # 4) Сборка sd и sd-server
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+          cmake --build build --config Release --target sd-server --parallel
+
+      # 5) Артефакты
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: sd-win-amd
+          path: |
+            build/bin/Release/sd.exe
+            build/bin/Release/sd-server.exe
+            build/bin/Release/libstable-diffusion*.dll
+            build/bin/Release/*.spv       # шейдеры Vulkan, если они генерируются
