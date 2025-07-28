@@ -18,7 +18,9 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libvulkan-dev
+          sudo apt-get install -y \
+            build-essential cmake ninja-build \
+            libvulkan-dev shaderc
 
       # ③ Конфигурация CMake (статический билд с Vulkan)
       - name: Configure
