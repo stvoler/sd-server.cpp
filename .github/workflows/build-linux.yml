@@ -1,0 +1,45 @@
+name: sd-linux-build
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    name: Linux x86_64 (Vulkan)
+    runs-on: ubuntu-latest
+
+    steps:
+      # ① Клонируем репозиторий вместе с подмодулями
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # ② Зависимости (компилятор + Vulkan SDK headers)
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libvulkan-dev
+
+      # ③ Конфигурация CMake (статический билд с Vulkan)
+      - name: Configure
+        run: |
+          cmake -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DSD_VULKAN=ON \
+                -DBUILD_SHARED_LIBS=OFF
+
+      # ④ Сборка sd и sd-server
+      - name: Build
+        run: |
+          cmake --build build --config Release -j$(nproc)
+          cmake --build build --config Release --target sd-server -j$(nproc)
+
+      # ⑤ Артефакты
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sd-linux-x86_64
+          path: |
+            build/bin/sd
+            build/bin/sd-server
+            build/bin/libstable-diffusion*.so
+            build/bin/*.spv   # шейдеры для Vulkan, если есть

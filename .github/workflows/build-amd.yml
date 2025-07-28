@@ -1,15 +1,15 @@
 # .github/workflows/build-amd.yml
 name: Build AMD GPU binary (Vulkan + DirectML)
 
-on:
-  push:
-    paths:
-      - '.github/workflows/build-amd.yml'
-      - 'CMakeLists.txt'
-      - '**/*.cpp'
-      - '**/*.hpp'
-      - '**/*.cu'
-  workflow_dispatch:
+# on:
+#   push:
+#     paths:
+#       - '.github/workflows/build-amd.yml'
+#       - 'CMakeLists.txt'
+#       - '**/*.cpp'
+#       - '**/*.hpp'
+#       - '**/*.cu'
+#   workflow_dispatch:
 
 jobs:
   build-amd:
