@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build \
-            libvulkan-dev glslang-tools
+            libvulkan-dev glslc
 
       # ③ Конфигурация CMake (статический билд с Vulkan)
       - name: Configure
