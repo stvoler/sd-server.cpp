@@ -72,10 +72,15 @@ jobs:
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
 
+    # В КОНТЕЙНЕРЕ по умолчанию run-скрипты идут под /bin/sh → принудительно bash
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Install build deps (inside CUDA container)
         run: |
-          set -e
+          set -euo pipefail
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
             git ca-certificates build-essential cmake ninja-build \
@@ -95,6 +100,7 @@ jobs:
           # подбирай архитектуры под свои целевые GPU
           CMAKE_CUDA_ARCHS: "61;75;86;89"
         run: |
+          set -euo pipefail
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TRY_COMPILE_CONFIGURATION=Release \
@@ -106,6 +112,7 @@ jobs:
 
       - name: Build sd & sd-server
         run: |
+          set -euo pipefail
           cmake --build build --parallel
           cmake --build build --parallel --target sd-server
 
