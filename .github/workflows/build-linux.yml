@@ -1,26 +1,37 @@
-name: build linux
+name: sd-linux-build
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-linux.yml'
+      - 'CMakeLists.txt'
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/*.cu'
 
 jobs:
   linux-vulkan:
     name: Linux x86_64 (Vulkan)
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install deps (Vulkan)
+      - name: Install deps (build + Vulkan + glslc)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build \
-            libvulkan-dev mesa-vulkan-drivers vulkan-tools glslc
+            libvulkan-dev mesa-vulkan-drivers vulkan-tools \
+            glslc
+          # опционально: чтобы меньше системных зависимостей
+          sudo apt-get install -y libc6-dev
 
-      - name: Configure (Vulkan)
+      - name: Configure (Vulkan, mostly-static libstdc++)
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -29,18 +40,25 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DSD_VULKAN=ON
 
-      - name: Build (Vulkan)
+      - name: Build sd & sd-server
         run: |
           cmake --build build --parallel
           cmake --build build --parallel --target sd-server
 
-      - name: Package (Vulkan)
+      - name: Collect package
         run: |
           mkdir -p package
+          # бинарники
           cp build/bin/sd package/
           cp build/bin/sd-server package/
-          if ls build/bin/*.spv >/dev/null 2>&1; then cp build/bin/*.spv package/; fi
-          if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then cp build/bin/libstable-diffusion*.so package/; fi
+          # шейдеры, если сборка их сгенерировала
+          if ls build/bin/*.spv >/dev/null 2>&1; then
+            cp build/bin/*.spv package/
+          fi
+          # иногда проект кладёт вспом. so — заберём, если есть
+          if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
+            cp build/bin/libstable-diffusion*.so package/
+          fi
           tar -czf sd-linux-vulkan.tar.gz -C package .
 
       - uses: actions/upload-artifact@v4
@@ -51,14 +69,18 @@ jobs:
   linux-cuda:
     name: Linux x86_64 (CUDA 12.4)
     runs-on: ubuntu-latest
+    # Используем официальный CUDA-образ с nvcc и библиотеками
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+
     steps:
-      - name: Install deps
+      - name: Install build deps (inside CUDA container)
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            git ca-certificates build-essential cmake ninja-build libc6-dev
+            git ca-certificates build-essential cmake ninja-build \
+            # на всякий случай для линковки
+            libc6-dev
           update-ca-certificates
 
       - uses: actions/checkout@v4
@@ -66,12 +88,13 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Show CUDA
+      - name: Show CUDA version
         run: nvcc --version || true
 
-      - name: Configure (CUDA)
+      - name: Configure (CUDA, mostly-static libstdc++)
         env:
-          CMAKE_CUDA_ARCHS: "61;75;86;89"
+          # подбирай архитектуры под свои целевые GPU
+          CMAKE_CUDA_ARCHS: "61;75;86;89;120"
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -82,17 +105,20 @@ jobs:
             -DSD_CUDA=ON \
             "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHS}"
 
-      - name: Build (CUDA)
+      - name: Build sd & sd-server
         run: |
           cmake --build build --parallel
           cmake --build build --parallel --target sd-server
 
-      - name: Package (CUDA)
+      - name: Collect package
         run: |
           mkdir -p package
           cp build/bin/sd package/
           cp build/bin/sd-server package/
-          if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then cp build/bin/libstable-diffusion*.so package/; fi
+          # если проект кладёт какие-то *.so (обычно не нужно при статик-линке libstdc++)
+          if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
+            cp build/bin/libstable-diffusion*.so package/
+          fi
           tar -czf sd-linux-cuda.tar.gz -C package .
 
       - uses: actions/upload-artifact@v4
