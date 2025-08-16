@@ -75,8 +75,11 @@ jobs:
     steps:
       - name: Install build deps (inside CUDA container)
         run: |
+          set -e
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates build-essential cmake ninja-build libc6-dev pkg-config
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            git ca-certificates build-essential cmake ninja-build \
+            libc6-dev pkg-config patchelf rsync
           update-ca-certificates
 
       - uses: actions/checkout@v4
@@ -87,7 +90,7 @@ jobs:
       - name: Show CUDA version
         run: nvcc --version || true
 
-      - name: Configure (CUDA, mostly-static libstdc++)
+      - name: Configure (CUDA, mostly-static libstdc++ + rpath=$ORIGIN)
         env:
           # подбирай архитектуры под свои целевые GPU
           CMAKE_CUDA_ARCHS: "61;75;86;89"
@@ -95,7 +98,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TRY_COMPILE_CONFIGURATION=Release \
-            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,-rpath,'\$ORIGIN'" \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_CUDA=ON \
             -DSD_CUDA=ON \
@@ -106,14 +109,46 @@ jobs:
           cmake --build build --parallel
           cmake --build build --parallel --target sd-server
 
-      - name: Collect package
+      - name: Collect package (bundle CUDA runtime .so next to binaries)
         run: |
+          set -euo pipefail
           mkdir -p package
+          # бинарники
           cp build/bin/sd package/
           cp build/bin/sd-server package/
+          # если проект кладёт свои so — заберём
           if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
-            cp build/bin/libstable-diffusion*.so package/
+            cp -a build/bin/libstable-diffusion*.so package/
           fi
+
+          # где лежат CUDA библиотеки в контейнере
+          CUDA_LIBDIR="/usr/local/cuda/lib64"
+          if [ ! -d "$CUDA_LIBDIR" ]; then
+            CUDA_LIBDIR="/usr/local/cuda/targets/x86_64-linux/lib"
+          fi
+
+          # минимально нужные рантайм-библиотеки CUDA (сохраняем symlink-и)
+          rsync -a --info=NAME \
+            "$CUDA_LIBDIR/libcudart.so"* \
+            "$CUDA_LIBDIR/libcublas.so"* \
+            "$CUDA_LIBDIR/libcublasLt.so"* \
+            "$CUDA_LIBDIR/libcurand.so"* \
+            "$CUDA_LIBDIR/libcusparse.so"* \
+            "$CUDA_LIBDIR/libnvrtc.so"* \
+            "$CUDA_LIBDIR/libnvJitLink.so"* \
+            package/ || true
+
+          # облегчить бинарники (не обязательно)
+          strip -s package/sd package/sd-server || true
+
+          # гарантируем rpath -> $ORIGIN (на случай, если линкер проигнорил флаг)
+          patchelf --set-rpath '$ORIGIN' package/sd || true
+          patchelf --set-rpath '$ORIGIN' package/sd-server || true
+
+          # быстрая проверка зависимостей (не фейлим job)
+          echo "ldd sd:" && (cd package && ldd ./sd || true)
+          echo "ldd sd-server:" && (cd package && ldd ./sd-server || true)
+
           tar -czf sd-linux-cuda.tar.gz -C package .
 
       - uses: actions/upload-artifact@v4
