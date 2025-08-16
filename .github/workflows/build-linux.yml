@@ -1,47 +1,127 @@
 name: sd-linux-build
 
-# on: [push, workflow_dispatch]
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/sd-linux-build.yml'
+      - 'CMakeLists.txt'
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/*.cu'
 
 jobs:
-  build:
+  linux-vulkan:
     name: Linux x86_64 (Vulkan)
     runs-on: ubuntu-latest
 
     steps:
-      # ① Клонируем репозиторий вместе с подмодулями
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
 
-      # ② Зависимости (компилятор + Vulkan SDK headers)
-      - name: Install deps
+      - name: Install deps (build + Vulkan + glslc)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build \
-            libvulkan-dev glslc
+            libvulkan-dev mesa-vulkan-drivers vulkan-tools \
+            glslc
+          # опционально: чтобы меньше системных зависимостей
+          sudo apt-get install -y libc6-dev
 
-      # ③ Конфигурация CMake (статический билд с Vulkan)
-      - name: Configure
+      - name: Configure (Vulkan, mostly-static libstdc++)
         run: |
-          cmake -B build \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DSD_VULKAN=ON \
-                -DBUILD_SHARED_LIBS=OFF
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TRY_COMPILE_CONFIGURATION=Release \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DSD_VULKAN=ON
 
-      # ④ Сборка sd и sd-server
-      - name: Build
+      - name: Build sd & sd-server
         run: |
-          cmake --build build --config Release -j$(nproc)
-          cmake --build build --config Release --target sd-server -j$(nproc)
+          cmake --build build --parallel
+          cmake --build build --parallel --target sd-server
 
-      # ⑤ Артефакты
+      - name: Collect package
+        run: |
+          mkdir -p package
+          # бинарники
+          cp build/bin/sd package/
+          cp build/bin/sd-server package/
+          # шейдеры, если сборка их сгенерировала
+          if ls build/bin/*.spv >/dev/null 2>&1; then
+            cp build/bin/*.spv package/
+          fi
+          # иногда проект кладёт вспом. so — заберём, если есть
+          if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
+            cp build/bin/libstable-diffusion*.so package/
+          fi
+          tar -czf sd-linux-vulkan.tar.gz -C package .
+
       - uses: actions/upload-artifact@v4
         with:
-          name: sd-linux-x86_64
-          path: |
-            build/bin/sd
-            build/bin/sd-server
-            build/bin/libstable-diffusion*.so
-            build/bin/*.spv   # шейдеры для Vulkan, если есть
+          name: sd-linux-vulkan
+          path: sd-linux-vulkan.tar.gz
+
+  linux-cuda:
+    name: Linux x86_64 (CUDA 12.4)
+    runs-on: ubuntu-latest
+    # Используем официальный CUDA-образ с nvcc и библиотеками
+    container:
+      image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+    steps:
+      - name: Install build deps (inside CUDA container)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            git ca-certificates build-essential cmake ninja-build \
+            # на всякий случай для линковки
+            libc6-dev
+          update-ca-certificates
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Show CUDA version
+        run: nvcc --version || true
+
+      - name: Configure (CUDA, mostly-static libstdc++)
+        env:
+          # подбирай архитектуры под свои целевые GPU
+          CMAKE_CUDA_ARCHS: "61;75;86;89"
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TRY_COMPILE_CONFIGURATION=Release \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_CUDA=ON \
+            -DSD_CUDA=ON \
+            "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHS}"
+
+      - name: Build sd & sd-server
+        run: |
+          cmake --build build --parallel
+          cmake --build build --parallel --target sd-server
+
+      - name: Collect package
+        run: |
+          mkdir -p package
+          cp build/bin/sd package/
+          cp build/bin/sd-server package/
+          # если проект кладёт какие-то *.so (обычно не нужно при статик-линке libstdc++)
+          if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
+            cp build/bin/libstable-diffusion*.so package/
+          fi
+          tar -czf sd-linux-cuda.tar.gz -C package .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sd-linux-cuda
+          path: sd-linux-cuda.tar.gz
