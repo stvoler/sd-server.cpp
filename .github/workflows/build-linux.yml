@@ -69,7 +69,6 @@ jobs:
   linux-cuda:
     name: Linux x86_64 (CUDA 12.4)
     runs-on: ubuntu-latest
-    # Используем официальный CUDA-образ с nvcc и библиотеками
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
 
@@ -77,10 +76,7 @@ jobs:
       - name: Install build deps (inside CUDA container)
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            git ca-certificates build-essential cmake ninja-build \
-            # на всякий случай для линковки
-            libc6-dev
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates build-essential cmake ninja-build libc6-dev pkg-config
           update-ca-certificates
 
       - uses: actions/checkout@v4
@@ -115,7 +111,6 @@ jobs:
           mkdir -p package
           cp build/bin/sd package/
           cp build/bin/sd-server package/
-          # если проект кладёт какие-то *.so (обычно не нужно при статик-линке libstdc++)
           if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
             cp build/bin/libstable-diffusion*.so package/
           fi
