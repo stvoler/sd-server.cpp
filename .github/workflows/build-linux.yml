@@ -94,7 +94,7 @@ jobs:
       - name: Configure (CUDA, mostly-static libstdc++)
         env:
           # подбирай архитектуры под свои целевые GPU
-          CMAKE_CUDA_ARCHS: "61;75;86;89"
+          CMAKE_CUDA_ARCHS: "61;75;86;89;120"
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
