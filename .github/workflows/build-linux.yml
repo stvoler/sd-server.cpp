@@ -55,7 +55,7 @@ jobs:
           if ls build/bin/*.spv >/dev/null 2>&1; then
             cp build/bin/*.spv package/
           fi
-          # иногда проект кладёт вспом. so — заберём, если есть
+          # если проект кладёт свои so — заберём
           if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
             cp build/bin/libstable-diffusion*.so package/
           fi
@@ -72,7 +72,7 @@ jobs:
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
 
-    # В КОНТЕЙНЕРЕ по умолчанию run-скрипты идут под /bin/sh → принудительно bash
+    # В контейнере по умолчанию /bin/sh — фиксируем bash
     defaults:
       run:
         shell: bash
@@ -97,7 +97,6 @@ jobs:
 
       - name: Configure (CUDA, mostly-static libstdc++ + rpath=$ORIGIN)
         env:
-          # подбирай архитектуры под свои целевые GPU
           CMAKE_CUDA_ARCHS: "61;75;86;89"
         run: |
           set -euo pipefail
@@ -116,14 +115,12 @@ jobs:
           cmake --build build --parallel
           cmake --build build --parallel --target sd-server
 
-      - name: Collect package (bundle CUDA runtime .so next to binaries)
+      - name: Collect package (bundle only needed CUDA SONAMEs)
         run: |
           set -euo pipefail
           mkdir -p package
-          # бинарники
           cp build/bin/sd package/
           cp build/bin/sd-server package/
-          # если проект кладёт свои so — заберём
           if ls build/bin/libstable-diffusion*.so >/dev/null 2>&1; then
             cp -a build/bin/libstable-diffusion*.so package/
           fi
@@ -134,25 +131,25 @@ jobs:
             CUDA_LIBDIR="/usr/local/cuda/targets/x86_64-linux/lib"
           fi
 
-          # минимально нужные рантайм-библиотеки CUDA (сохраняем symlink-и)
+          # Копируем только SONAME (*.so.12*) + их target'ы (сохраняем symlink-и).
+          # Безверсные *.so НЕ нужны для рантайма.
           rsync -a --info=NAME \
-            "$CUDA_LIBDIR/libcudart.so"* \
-            "$CUDA_LIBDIR/libcublas.so"* \
-            "$CUDA_LIBDIR/libcublasLt.so"* \
-            "$CUDA_LIBDIR/libcurand.so"* \
-            "$CUDA_LIBDIR/libcusparse.so"* \
-            "$CUDA_LIBDIR/libnvrtc.so"* \
-            "$CUDA_LIBDIR/libnvJitLink.so"* \
+            "$CUDA_LIBDIR/libcudart.so.12"* \
+            "$CUDA_LIBDIR/libcublas.so.12"* \
+            "$CUDA_LIBDIR/libcublasLt.so.12"* \
+            "$CUDA_LIBDIR/libcurand.so.10"* \
+            "$CUDA_LIBDIR/libcusparse.so.12"* \
+            "$CUDA_LIBDIR/libnvrtc.so.12"* \
+            "$CUDA_LIBDIR/libnvJitLink.so.12"* \
             package/ || true
 
-          # облегчить бинарники (не обязательно)
+          # облегчить бинарники (не критично)
           strip -s package/sd package/sd-server || true
 
-          # гарантируем rpath -> $ORIGIN (на случай, если линкер проигнорил флаг)
+          # гарантируем rpath -> $ORIGIN
           patchelf --set-rpath '$ORIGIN' package/sd || true
           patchelf --set-rpath '$ORIGIN' package/sd-server || true
 
-          # быстрая проверка зависимостей (не фейлим job)
           echo "ldd sd:" && (cd package && ldd ./sd || true)
           echo "ldd sd-server:" && (cd package && ldd ./sd-server || true)
 
